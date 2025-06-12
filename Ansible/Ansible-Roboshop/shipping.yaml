@@ -1,0 +1,85 @@
+- name: install shipping component
+  hosts: shipping
+  become: 'yes'
+  tasks:
+    - name: Install maven
+      ansible.builtin.yum:
+        name: maven
+        state: installed
+
+    - name: Check roboshop user exist or not
+      ansible.builtin.command: id roboshop
+      register: out
+      ignore_errors: 'yes'
+
+    - when: out.rc != 0
+      name: create roboshop user
+      become: 'yes'
+      ansible.builtin.user:
+        name: roboshop
+
+    - name: check /app directory exist or not
+      ansible.builtin.stat:
+        path: /app
+        register: directory
+
+    - name: Print a directory message
+      ansible.builtin.debug:
+        msg: 'output: {{directory}}'
+
+    - when: directory stat.exist == False
+      name: create /app directory
+      ansible.builtin.file:
+        path: /app
+        state: directory
+
+    - name: Download shipping artifact
+      ansible.builtin.get_url:
+        url: https://roboshop-builds.s3.amazonaws.com/shipping.zip
+        dest: /tmp
+
+    - name: Extract shipping artifact
+      ansible.builtin.unarchive:
+        src: /tmp/shipping.zip
+        dest: /app
+        remote_src: 'yes'
+
+    - name: download the dependencies & build the application
+      ansible.builtin.command: mvn clean package
+      args:
+        chdir: /app
+
+    - name: rename shipping.jar
+      ansible.builtin.command: mv target/shipping-1.0.jar shipping.jar
+      args:
+        chdir: /app
+
+    - name: Copy file shipping.service
+      ansible.builtin.copy:
+        src: shipping.service
+        dest: /etc/systemd/system/shipping.service
+
+    - name: daemon-reload
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Start and enable shipping service
+      ansible.builtin.service:
+        name: shipping
+        state: started
+        enabled: 'yes'
+
+    - name: Install mysql
+      ansible.builtin.yum:
+        name: mysql
+        state: installed
+
+    - name: load shipping data
+      ansible.builtin.command: >-
+        mysql -h <MYSQL-SERVER-IPADDRESS> -uroot -pRoboShop@1 <
+        /app/schema/shipping.sql
+        
+    - name: Restart shipping service
+      ansible.builtin.systemd:
+        name: shipping
+        state: restarted
